@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Win Messenger</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    .chat-container { height: calc(100vh - 140px); }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+
+<div id="login-screen" class="flex items-center justify-center min-h-screen bg-zinc-950">
+  <div class="bg-zinc-900 p-8 rounded-3xl w-full max-w-md">
+    <h1 class="text-4xl font-bold text-center text-green-500 mb-8">Win Messenger</h1>
+    
+    <input id="login-id" type="text" placeholder="Personal ID" 
+           class="w-full bg-zinc-800 rounded-2xl px-5 py-4 mb-6 focus:outline-none focus:ring-2 focus:ring-green-500">
+    
+    <button onclick="login()" class="w-full bg-green-600 hover:bg-green-500 py-4 rounded-2xl font-semibold mb-3">
+      Войти
+    </button>
+    <button onclick="showRegister()" class="w-full py-4 text-zinc-400 hover:text-white">
+      Зарегистрироваться
+    </button>
+  </div>
+</div>
+
+<div id="register-screen" class="hidden flex items-center justify-center min-h-screen bg-zinc-950">
+  <div class="bg-zinc-900 p-8 rounded-3xl w-full max-w-md">
+    <h1 class="text-3xl font-bold text-center mb-8">Регистрация</h1>
+    <input id="reg-username" type="text" placeholder="Имя пользователя" 
+           class="w-full bg-zinc-800 rounded-2xl px-5 py-4 mb-6 focus:outline-none focus:ring-2 focus:ring-green-500">
+    <button onclick="register()" class="w-full bg-green-600 hover:bg-green-500 py-4 rounded-2xl font-semibold">
+      Зарегистрироваться
+    </button>
+    <button onclick="showLogin()" class="w-full mt-4 text-zinc-400">← Назад</button>
+  </div>
+</div>
+
+<div id="main-app" class="hidden flex h-screen">
+  <!-- Sidebar -->
+  <div id="sidebar" class="w-72 bg-zinc-900 border-r border-zinc-700 flex flex-col">
+    <div class="p-5 border-b border-zinc-700 flex items-center gap-3">
+      <h1 class="text-2xl font-bold text-green-500">Win Messenger</h1>
+    </div>
+
+    <div class="p-4">
+      <button onclick="showProfile()" class="w-full flex items-center gap-3 p-3 hover:bg-zinc-800 rounded-2xl">
+        <i class="fas fa-user-circle text-4xl text-green-400"></i>
+        <div>
+          <p id="username-display" class="font-semibold"></p>
+          <p class="text-xs text-green-400">● онлайн</p>
+        </div>
+      </button>
+    </div>
+
+    <div class="px-4">
+      <button onclick="openChat('general')" class="w-full text-left p-3 hover:bg-zinc-800 rounded-2xl flex items-center gap-3">
+        <i class="fas fa-globe text-green-400"></i> Общий чат
+      </button>
+    </div>
+
+    <div class="mt-6 px-4">
+      <div class="flex justify-between mb-3">
+        <span class="text-zinc-400 text-sm">Контакты</span>
+        <button onclick="addContactById()" class="text-green-400"><i class="fas fa-plus"></i></button>
+      </div>
+      <div id="contacts-list" class="space-y-1"></div>
+    </div>
+
+    <div class="mt-6 px-4">
+      <div class="flex justify-between mb-3">
+        <span class="text-zinc-400 text-sm">Группы</span>
+        <button onclick="createGroup()" class="text-green-400"><i class="fas fa-plus"></i></button>
+      </div>
+      <div id="groups-list" class="space-y-1"></div>
+    </div>
+
+    <div class="mt-auto p-4">
+      <button onclick="showSettings()" class="w-full flex items-center gap-3 p-3 hover:bg-zinc-800 rounded-2xl text-zinc-400">
+        <i class="fas fa-cog"></i> Настройки
+      </button>
+    </div>
+  </div>
+
+  <!-- Чат -->
+  <div class="flex-1 flex flex-col">
+    <div class="h-16 bg-zinc-900 border-b border-zinc-700 flex items-center px-6">
+      <button onclick="toggleSidebar()" class="lg:hidden text-3xl mr-4">☰</button>
+      <h2 id="chat-title" class="text-xl font-semibold">Общий чат</h2>
+    </div>
+
+    <div id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-4 chat-container"></div>
+
+    <div class="p-4 bg-zinc-900 border-t border-zinc-700">
+      <div class="flex gap-3">
+        <input id="msg-input" type="text" placeholder="Сообщение..." 
+               class="flex-1 bg-zinc-800 rounded-3xl px-6 py-4 focus:outline-none focus:ring-2 focus:ring-green-500"
+               onkeypress="if(event.key==='Enter') sendMessage()">
+        <button onclick="sendMessage()" class="bg-green-600 hover:bg-green-500 px-8 rounded-3xl font-medium">Отправить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==================== НАСТРОЙКИ ====================
+const API_BASE = "https://ВАШ_ПРОЕКТ.onrender.com";   // ← ИЗМЕНИ
+const WS_BASE = "wss://ВАШ_ПРОЕКТ.onrender.com/ws/"; // ← ИЗМЕНИ
+
+let currentUser = null;
+let currentChat = "general";
+let ws = null;
+
+// ==================== ЭКРАНЫ ====================
+function showLogin() {
+  document.getElementById("login-screen").classList.remove("hidden");
+  document.getElementById("register-screen").classList.add("hidden");
+  document.getElementById("main-app").classList.add("hidden");
+}
+
+function showRegister() {
+  document.getElementById("login-screen").classList.add("hidden");
+  document.getElementById("register-screen").classList.remove("hidden");
+}
+
+async function register() {
+  const username = document.getElementById("reg-username").value.trim();
+  if (!username) return alert("Введите имя");
+
+  try {
+    const res = await fetch(`${API_BASE}/register?username=${encodeURIComponent(username)}`);
+    const data = await res.json();
+    alert(`✅ Успех!\n\nВаш Personal ID:\n${data.user_id}`);
+    showLogin();
+  } catch(e) {
+    alert("Ошибка сервера");
+  }
+}
+
+async function login() {
+  const userId = document.getElementById("login-id").value.trim();
+  if (!userId) return alert("Введите Personal ID");
+
+  try {
+    const res = await fetch(`${API_BASE}/login?user_id=${userId}`);
+    const data = await res.json();
+    if (data.status === "success") {
+      currentUser = data.user;
+      document.getElementById("username-display").textContent = currentUser.username;
+      document.getElementById("login-screen").classList.add("hidden");
+      document.getElementById("main-app").classList.remove("hidden");
+      connectWebSocket(userId);
+      loadDummyData();
+      openChat("general");
+    } else {
+      alert("Неверный ID");
+    }
+  } catch(e) {
+    alert("Сервер недоступен");
+  }
+}
+
+// ==================== WEBSOCKET ====================
+function connectWebSocket(userId) {
+  ws = new WebSocket(WS_BASE + userId);
+  ws.onopen = () => console.log("✅ WebSocket подключён");
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.action === "new_message") {
+      addMessage(data.sender, data.content, data.timestamp);
+    }
+  };
+}
+
+function openChat(type) {
+  currentChat = type;
+  document.getElementById("chat-title").textContent = type === "general" ? "Общий чат" : type;
+  document.getElementById("chat-messages").innerHTML = "";
+}
+
+function addMessage(sender, content, time) {
+  const container = document.getElementById("chat-messages");
+  const isMe = sender === currentUser.username;
+  container.innerHTML += `
+    <div class="flex ${isMe ? 'justify-end' : 'justify-start'} mb-4">
+      <div class="message ${isMe ? 'bg-green-600' : 'bg-zinc-700'} rounded-3xl px-5 py-3">
+        <p class="text-xs opacity-75">${sender} • ${time}</p>
+        <p>${content}</p>
+      </div>
+    </div>`;
+  container.scrollTop = container.scrollHeight;
+}
+
+function sendMessage() {
+  const input = document.getElementById("msg-input");
+  const text = input.value.trim();
+  if (!text || !ws) return;
+
+  ws.send(JSON.stringify({
+    action: "send_message",
+    content: text,
+    receiver_id: currentChat === "general" ? null : currentChat
+  }));
+
+  addMessage(currentUser.username, text, new Date().toLocaleTimeString('ru-RU',{hour:'2-digit', minute:'2-digit'}));
+  input.value = "";
+}
+
+function loadDummyData() {
+  // Контакты и группы (как раньше)
+  const contacts = ["Alice", "Bob", "Мария"];
+  const groups = ["Друзья", "Работа"];
+  contacts.forEach(n => {
+    const d = document.createElement("div");
+    d.className = "p-3 hover:bg-zinc-800 rounded-2xl cursor-pointer flex gap-3";
+    d.innerHTML = `<i class="fas fa-user text-green-400"></i><span>${n}</span>`;
+    d.onclick = () => openChat(n);
+    document.getElementById("contacts-list").appendChild(d);
+  });
+  groups.forEach(n => {
+    const d = document.createElement("div");
+    d.className = "p-3 hover:bg-zinc-800 rounded-2xl cursor-pointer flex gap-3";
+    d.innerHTML = `<i class="fas fa-users text-green-400"></i><span>${n}</span>`;
+    d.onclick = () => openChat(n);
+    document.getElementById("groups-list").appendChild(d);
+  });
+}
+
+function toggleSidebar() {
+  document.getElementById("sidebar").classList.toggle("-translate-x-full");
+}
+
+function addContactById() { const id = prompt("Personal ID:"); if(id) alert("Добавлен"); }
+function createGroup() { const n = prompt("Название:"); if(n) alert("Создана"); }
+function showProfile() { alert(`ID: ${currentUser.id}`); }
+function showSettings() { alert("Настройки"); }
+
+// Старт
+showLogin();
+</script>
+</body>
+</html>

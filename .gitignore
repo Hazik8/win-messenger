@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+encryption_key.key
+.env
+venv/
+env/
+.env
+.DS_Store
+*.log
+*.pid
+*.seed
+*.pid.lock
