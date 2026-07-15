@@ -3,6 +3,7 @@
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
@@ -104,19 +105,30 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # ====================== РОУТЫ ======================
-@app.post("/register")
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Win Messenger Server is running"}
+
+@app.get("/register")  # Изменено с POST на GET
 async def register(username: str):
     db = SessionLocal()
     try:
+        # Проверяем, существует ли пользователь с таким именем
+        existing = db.query(User).filter(User.username == username).first()
+        if existing:
+            return {"status": "error", "message": "Пользователь с таким именем уже существует"}
+        
         user_id = str(uuid.uuid4())[:8].upper()
         user = User(user_id=user_id, username=username)
         db.add(user)
         db.commit()
         return {"status": "success", "user_id": user_id, "username": username}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
     finally:
         db.close()
 
-@app.post("/login")
+@app.get("/login")  # Изменено с POST на GET
 async def login(user_id: str):
     db = SessionLocal()
     try:
@@ -124,6 +136,8 @@ async def login(user_id: str):
         if user:
             return {"status": "success", "user": {"id": user.user_id, "username": user.username, "bio": user.bio}}
         return {"status": "error", "message": "Пользователь не найден"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
     finally:
         db.close()
 
@@ -141,7 +155,7 @@ async def update_profile(user_id: str, username: str = None, bio: str = None):
     finally:
         db.close()
 
-@app.post("/create_group")
+@app.get("/create_group")  # Изменено с POST на GET
 async def create_group(name: str):
     db = SessionLocal()
     try:
@@ -150,6 +164,26 @@ async def create_group(name: str):
         db.add(group)
         db.commit()
         return {"status": "success", "group_id": group_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    finally:
+        db.close()
+
+@app.get("/users")  # Новый эндпоинт для получения списка пользователей
+async def get_users():
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        return {"status": "success", "users": [{"id": u.user_id, "username": u.username} for u in users]}
+    finally:
+        db.close()
+
+@app.get("/groups")  # Новый эндпоинт для получения списка групп
+async def get_groups():
+    db = SessionLocal()
+    try:
+        groups = db.query(Group).all()
+        return {"status": "success", "groups": [{"id": g.group_id, "name": g.name} for g in groups]}
     finally:
         db.close()
 
@@ -158,6 +192,19 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await manager.connect(websocket, user_id)
     db = SessionLocal()
     try:
+        # Отправляем историю сообщений при подключении
+        msgs = db.query(Message).order_by(Message.timestamp.desc()).limit(150).all()
+        msg_list = []
+        for m in reversed(msgs):  # Переворачиваем для правильного порядка
+            sender = db.query(User).get(m.sender_id)
+            msg_list.append({
+                "sender": sender.username if sender else "Unknown",
+                "content": decrypt_message(m.encrypted_content),
+                "timestamp": m.timestamp.strftime("%H:%M")
+            })
+        if msg_list:
+            await websocket.send_text(json.dumps({"action": "history", "messages": msg_list}))
+        
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
@@ -172,9 +219,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 
                 encrypted = encrypt_message(content)
 
+                # Определяем получателя
+                receiver = None
+                if receiver_id:
+                    receiver = db.query(User).filter_by(user_id=receiver_id).first()
+                
                 new_msg = Message(
                     sender_id=user.id,
-                    receiver_id=db.query(User).filter_by(user_id=receiver_id).first().id if receiver_id else None,
+                    receiver_id=receiver.id if receiver else None,
                     group_id=group_id,
                     encrypted_content=encrypted
                 )
@@ -194,7 +246,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             elif message["action"] == "get_messages":
                 msgs = db.query(Message).order_by(Message.timestamp.desc()).limit(150).all()
                 msg_list = []
-                for m in msgs:
+                for m in reversed(msgs):
                     sender = db.query(User).get(m.sender_id)
                     msg_list.append({
                         "sender": sender.username if sender else "Unknown",
@@ -214,4 +266,5 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print(f"🚀 Server running on port {port}")
+    print(f"📡 WebSocket endpoint: ws://localhost:{port}/ws/{{user_id}}")
     uvicorn.run(app, host="0.0.0.0", port=port)

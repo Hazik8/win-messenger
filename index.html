@@ -108,8 +108,9 @@
 
 <script>
 // ==================== НАСТРОЙКИ ====================
-const API_BASE = "https://win-messenge.onrender.com";   // ← ИЗМЕНИ
-const WS_BASE = "wss://win-messenge.onrender.com/ws/"; // ← ИЗМЕНИ
+// Замените на ваш URL после деплоя
+const API_BASE = window.location.origin; // или "https://ваш-проект.onrender.com";
+const WS_BASE = window.location.origin.replace('http', 'ws') + "/ws/";
 
 let currentUser = null;
 let currentChat = "general";
@@ -134,10 +135,14 @@ async function register() {
   try {
     const res = await fetch(`${API_BASE}/register?username=${encodeURIComponent(username)}`);
     const data = await res.json();
-    alert(`✅ Успех!\n\nВаш Personal ID:\n${data.user_id}`);
-    showLogin();
+    if (data.status === "success") {
+      alert(`✅ Успех!\n\nВаш Personal ID:\n${data.user_id}`);
+      showLogin();
+    } else {
+      alert(data.message || "Ошибка регистрации");
+    }
   } catch(e) {
-    alert("Ошибка сервера");
+    alert("Ошибка сервера: " + e.message);
   }
 }
 
@@ -154,41 +159,111 @@ async function login() {
       document.getElementById("login-screen").classList.add("hidden");
       document.getElementById("main-app").classList.remove("hidden");
       connectWebSocket(userId);
-      loadDummyData();
+      loadUsersAndGroups();
       openChat("general");
     } else {
-      alert("Неверный ID");
+      alert(data.message || "Неверный ID");
     }
   } catch(e) {
-    alert("Сервер недоступен");
+    alert("Сервер недоступен: " + e.message);
   }
 }
 
 // ==================== WEBSOCKET ====================
 function connectWebSocket(userId) {
-  ws = new WebSocket(WS_BASE + userId);
+  const wsUrl = WS_BASE + userId;
+  console.log("Подключение к WebSocket:", wsUrl);
+  
+  ws = new WebSocket(wsUrl);
   ws.onopen = () => console.log("✅ WebSocket подключён");
   ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.action === "new_message") {
-      addMessage(data.sender, data.content, data.timestamp);
+    try {
+      const data = JSON.parse(e.data);
+      console.log("Получено сообщение:", data);
+      
+      if (data.action === "new_message") {
+        addMessage(data.sender, data.content, data.timestamp);
+      } else if (data.action === "history") {
+        // Загружаем историю сообщений
+        const container = document.getElementById("chat-messages");
+        container.innerHTML = "";
+        data.messages.forEach(msg => {
+          addMessage(msg.sender, msg.content, msg.timestamp);
+        });
+      } else if (data.action === "messages") {
+        // Альтернативный формат истории
+        const container = document.getElementById("chat-messages");
+        container.innerHTML = "";
+        data.messages.forEach(msg => {
+          addMessage(msg.sender, msg.content, msg.timestamp);
+        });
+      }
+    } catch(err) {
+      console.error("Ошибка обработки сообщения:", err);
     }
   };
+  ws.onerror = (e) => {
+    console.error("WebSocket ошибка:", e);
+    alert("Ошибка соединения. Проверьте сервер.");
+  };
+  ws.onclose = () => {
+    console.log("❌ WebSocket отключён");
+    // Попытка переподключения через 3 секунды
+    setTimeout(() => {
+      if (currentUser) {
+        console.log("🔄 Попытка переподключения...");
+        connectWebSocket(userId);
+      }
+    }, 3000);
+  };
+}
+
+// ==================== ЗАГРУЗКА ДАННЫХ ====================
+async function loadUsersAndGroups() {
+  try {
+    // Загрузка пользователей
+    const usersRes = await fetch(`${API_BASE}/users`);
+    const usersData = await usersRes.json();
+    if (usersData.status === "success") {
+      const contactsList = document.getElementById("contacts-list");
+      contactsList.innerHTML = "";
+      usersData.users.forEach(u => {
+        if (u.id !== currentUser.id) {
+          const div = document.createElement("div");
+          div.className = "p-3 hover:bg-zinc-800 rounded-2xl cursor-pointer flex gap-3";
+          div.innerHTML = `<i class="fas fa-user text-green-400"></i><span>${u.username}</span>`;
+          div.onclick = () => openChat(u.id);
+          contactsList.appendChild(div);
+        }
+      });
+    }
+  } catch(e) {
+    console.error("Ошибка загрузки пользователей:", e);
+  }
 }
 
 function openChat(type) {
   currentChat = type;
-  document.getElementById("chat-title").textContent = type === "general" ? "Общий чат" : type;
+  const title = type === "general" ? "Общий чат" : type;
+  document.getElementById("chat-title").textContent = title;
   document.getElementById("chat-messages").innerHTML = "";
+  
+  // Запрашиваем историю сообщений
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      action: "get_messages",
+      chat: type
+    }));
+  }
 }
 
 function addMessage(sender, content, time) {
   const container = document.getElementById("chat-messages");
-  const isMe = sender === currentUser.username;
+  const isMe = sender === currentUser?.username;
   container.innerHTML += `
     <div class="flex ${isMe ? 'justify-end' : 'justify-start'} mb-4">
-      <div class="message ${isMe ? 'bg-green-600' : 'bg-zinc-700'} rounded-3xl px-5 py-3">
-        <p class="text-xs opacity-75">${sender} • ${time}</p>
+      <div class="${isMe ? 'bg-green-600' : 'bg-zinc-700'} rounded-3xl px-5 py-3 max-w-[70%]">
+        <p class="text-xs opacity-75">${sender} • ${time || new Date().toLocaleTimeString('ru-RU',{hour:'2-digit', minute:'2-digit'})}</p>
         <p>${content}</p>
       </div>
     </div>`;
@@ -198,46 +273,62 @@ function addMessage(sender, content, time) {
 function sendMessage() {
   const input = document.getElementById("msg-input");
   const text = input.value.trim();
-  if (!text || !ws) return;
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      alert("Нет соединения с сервером");
+    }
+    return;
+  }
 
-  ws.send(JSON.stringify({
+  const messageData = {
     action: "send_message",
     content: text,
-    receiver_id: currentChat === "general" ? null : currentChat
-  }));
-
+    receiver_id: currentChat === "general" ? null : currentChat,
+    group_id: currentChat.startsWith("GRP") ? currentChat : null
+  };
+  
+  ws.send(JSON.stringify(messageData));
   addMessage(currentUser.username, text, new Date().toLocaleTimeString('ru-RU',{hour:'2-digit', minute:'2-digit'}));
   input.value = "";
 }
 
-function loadDummyData() {
-  // Контакты и группы (как раньше)
-  const contacts = ["Alice", "Bob", "Мария"];
-  const groups = ["Друзья", "Работа"];
-  contacts.forEach(n => {
-    const d = document.createElement("div");
-    d.className = "p-3 hover:bg-zinc-800 rounded-2xl cursor-pointer flex gap-3";
-    d.innerHTML = `<i class="fas fa-user text-green-400"></i><span>${n}</span>`;
-    d.onclick = () => openChat(n);
-    document.getElementById("contacts-list").appendChild(d);
-  });
-  groups.forEach(n => {
-    const d = document.createElement("div");
-    d.className = "p-3 hover:bg-zinc-800 rounded-2xl cursor-pointer flex gap-3";
-    d.innerHTML = `<i class="fas fa-users text-green-400"></i><span>${n}</span>`;
-    d.onclick = () => openChat(n);
-    document.getElementById("groups-list").appendChild(d);
-  });
-}
-
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 function toggleSidebar() {
   document.getElementById("sidebar").classList.toggle("-translate-x-full");
 }
 
-function addContactById() { const id = prompt("Personal ID:"); if(id) alert("Добавлен"); }
-function createGroup() { const n = prompt("Название:"); if(n) alert("Создана"); }
-function showProfile() { alert(`ID: ${currentUser.id}`); }
-function showSettings() { alert("Настройки"); }
+function addContactById() {
+  const id = prompt("Введите Personal ID пользователя:");
+  if (id) {
+    alert("Пользователь добавлен в контакты!");
+    loadUsersAndGroups();
+  }
+}
+
+function createGroup() {
+  const name = prompt("Введите название группы:");
+  if (name) {
+    fetch(`${API_BASE}/create_group?name=${encodeURIComponent(name)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === "success") {
+          alert(`Группа создана! ID: ${data.group_id}`);
+          loadUsersAndGroups();
+        } else {
+          alert(data.message || "Ошибка создания группы");
+        }
+      })
+      .catch(e => alert("Ошибка сервера"));
+  }
+}
+
+function showProfile() {
+  alert(`Пользователь: ${currentUser?.username}\nID: ${currentUser?.id}`);
+}
+
+function showSettings() {
+  alert("Настройки будут доступны в следующей версии");
+}
 
 // Старт
 showLogin();
